@@ -1,0 +1,106 @@
+<html>
+<head>
+<style>
+pre { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+
+<div>Iframe</div>
+
+<div class="status"></div>
+<pre class="debug"></pre>
+
+<script type="text/javascript" src="/rebind.js"></script>
+<script type="text/javascript">
+function setStatus(text) {
+    document.querySelector('.status').textContent = text;
+}
+function setDebug(text) {
+    document.querySelector('.debug').textContent = text;
+}
+
+window.addEventListener('message', function(e) {
+    if (e.data.id === undefined) return;
+    var id = e.data.id;
+    var url = new URL(e.data.url);
+    var reboundUrl = 'http://' + document.location.hostname + url.pathname + url.search;
+    console.log('Fetching ' + reboundUrl);
+    fetch(reboundUrl).then(function(response) {
+        response.text().then(function(text) {
+            var data = {
+                target: Rebind.target,
+                status: 'fetched',
+                id: id,
+                result: {
+                    location: response.headers.get('Location'),
+                    server: response.headers.get('Server'),
+                    status: response.status,
+                    text: text,
+                },
+            };
+            setDebug(JSON.stringify(data.result));
+            parent.postMessage(data, '*');
+        });
+    }).catch(function(e) {
+        var data = {
+            target: Rebind.target,
+            status: 'error',
+            id: id,
+            error: e.toString(),
+        };
+        setDebug(e.toString());
+        parent.postMessage(data, '*');
+    });
+});
+parent.postMessage({ target: Rebind.target, status: 'loaded' }, '*');
+
+console.log('Triggering rebind for ' + Rebind.target);
+fetch('http://' + Rebind.target + '.R-' + Rebind.base).catch(function() {});
+
+var attempts = 0;
+function testRebindAfter(secs) {
+    attempts++;
+    function countdown() {
+        setStatus('Waiting for rebind attempt ' + attempts + ': ' + secs);
+        if (secs == 0) {
+            testRebind();
+        } else if (secs >= 1) {
+            setTimeout(countdown, 1000);
+            secs--;
+        } else {
+            setTimeout(countdown, secs * 1000);
+            secs = 0;
+        }
+    };
+    countdown();
+}
+
+function testRebind() {
+    fetch('http://' + document.location.hostname + '/robots.txt').then(function(resp) {
+        if (resp.headers.get('X-Not-Rebound') == '1') {
+            console.log(Rebind.target + ' not yet rebound');
+            if (attempts < 305) {
+                testRebindAfter(0.1);
+            } else if (attempts < 500) {
+                testRebindAfter(60);
+            } else {
+                setStatus('Unable to rebind');
+            }
+        } else {
+            console.log(Rebind.target + ' rebound');
+            setStatus('Rebound');
+            parent.postMessage({ target: Rebind.target, status: 'rebound' }, '*');
+        }
+    }).catch(function(e) {
+        parent.postMessage(e.toString(), '*');
+    });
+}
+// Chrome seems to re-check DNS on multiples of 100 attempts after 30/60 seconds
+// Seems harder in incognito mode - 120 seconds+
+testRebindAfter(30 + 5);
+
+</script>
+</body>
+</html>
+
